@@ -1,0 +1,68 @@
+(defparameter DEFAULT-DEPTH 7)
+(defparameter DEFAULT-VARS 7)
+(defparameter symbols '(a b c d e f g h i j k l m n o))
+(defparameter num-syms (len symbols))
+(defparameter fn-syms '((foo 3) (bar 2) (ack 3) (equal 2) (booleanp 1)))
+(defparameter num-fn-syms (len fn-syms))
+
+(defparameter NUM-FORMS 6)
+(defparameter NUM-FOR-ARBITRARY-ARITY 5)
+(defun decide-arity ()
+  (+ 1 (max 0 (- (truncate NUM-FOR-ARBITRARY-ARITY 2) 1))
+     (random (truncate NUM-FOR-ARBITRARY-ARITY 2))))
+
+(defun give-args (n)
+  (cond
+   ((equal n 0) nil)
+   (t (cons (if (random 2)
+		(nth (random num-syms) symbols)
+	      (create-formula (+ 1 (random 2)) symbols))
+	    (give-args (- n 1))))))
+
+(defun create-random-literal ()
+  (if (equal (random 2) (random 2))
+      (nth (random num-syms) symbols)
+    (let ((fn-sym (nth (random num-fn-syms) fn-syms)))
+      (let ((f (car fn-sym))
+	    (arity (cadr fn-sym)))
+	`(,f . ,(give-args arity))))))
+
+(defun make-var-list (n)
+  (cond
+   ((equal n 0) nil)
+   (t (cons (create-random-literal) (make-var-list (- n 1))))))
+
+(defun make-formulas (n depth vs)
+  (cond
+   ((equal n 0) nil)
+   (t (cons (create-formula depth vs)
+	    (make-formulas (- n 1) depth vs)))))
+
+(defun create-formula (depth vs)
+  (cond
+   ((equal depth 0)
+    (let ((r (random 10)))
+      (if (< r 3) (if (random 2) t nil)
+	(nth (random DEFAULT-VARS) vs))))
+   (t (let  ((r (random NUM-FORMS)))
+	(cond
+	 ((equal r 0)
+	  `(not ,(create-formula (- depth 1) vs)))
+	 ((equal r 1)
+	  `(implies ,(create-formula (- depth 1) vs)
+		    ,(create-formula (- depth 1) vs)))
+	 ((equal r 2)
+	  `(iff . ,(make-formulas (decide-arity) (- depth 1) vs)))
+	 ((equal r 3)
+	  `(and . ,(make-formulas (decide-arity) (- depth 1) vs)))
+	 ((equal r 4)
+	  `(if ,(create-formula (- depth 1) vs)
+	       ,(create-formula (- depth 1) vs)
+	     ,(create-formula (- depth 1) vs)))
+	 ((equal r 5)
+	  `(or . ,(make-formulas (decide-arity) (- depth 1) vs))))))))
+  
+;; function that randomly creates a formula with depth equal to the input
+(defun make-random-formula ()
+  (let ((var-list (make-var-list DEFAULT-VARS)))
+    (create-formula DEFAULT-DEPTH var-list)))
