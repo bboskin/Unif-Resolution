@@ -901,8 +901,10 @@ Examples
 	   (alt (fo-simplify alt)))
        (simplify-if test conseq alt)))
     ((list* 'iff es) (simplify-iff es))
-    ((satisfies atomic-formulap) (simplify-atomic-formula f))
-    ((satisfies quantified-formulap) (simplify-quantified-formula f))
+    ((satisfies atomic-formulap)
+     (simplify-atomic-formula f))
+    ((satisfies quantified-formulap)
+     (simplify-quantified-formula f))
     (f (error "Invalid formula ~a" f))))
 
 ;; random term generator -- not as easy to use here as it was for hwk6
@@ -1320,8 +1322,34 @@ Examples
      `(forall ,vars ,(tseitin- f vars)))
     (f (tseitin- f nil))))
 
+(defun split-and (ls simp ors)
+  (match ls
+   (nil (values simp ors))
+   ((list* (list* 'or es) rst)
+    (split-and rst simp (cons `(or . ,es) ors)))
+   ((list* f rst) (split-and rst (cons f simp) ors))))
+
+(defun dnf (f)
+  (match f
+    ((satisfies booleanp) f)
+    ((satisfies atomic-formulap) f)
+    ((list 'not f) `(not ,f))
+    ((list* 'or es) `(or . ,(mapcar #'dnf es)))
+    ((list* 'and es)
+     (mv-let
+      (simp ors) (split-and es nil nil)
+      (if (endp ors) `(and . ,simp)
+	`(or . ,(mapcar #'(lambda (x) (append x simp)) ors)))))))
+
+(defun cnf (f)
+  (match f
+    ((list 'forall vars f)
+     `(forall ,vars ,(negate* (dnf (nnf `(not ,f))))))
+    (f (negate* (dnf (nnf `(not ,f)))))))
+
 (defun simp-skolem-pnf-cnf (f)
-  (tseitin (fo-simplify (prenex (skolemize (nnf (fo-simplify f)))))))
+  (fo-simplify
+   (cnf (fo-simplify (prenex (skolemize (nnf (fo-simplify f))))))))
 
 ;;; Testing to ensure that the result of simp-skolem-pnf-cnf
 ;;; has the right properties (cnf & matrix). Because
@@ -1331,6 +1359,7 @@ Examples
 
 (defun matrixp (f)
   (match f
+    ((satisfies booleanp) t)
     ((satisfies atomic-formulap) t)
     ((list 'not f) (matrixp f))
     ((list* 'and fs)
@@ -2138,10 +2167,10 @@ Examples
 
 ;; These are slower
 
-; 21 secs 
+; 2 secs 
 (time (assert (equal 'valid (fo-no=-val test5))))
 
-; 35 secs
+; 2.7 secs
 (time (assert (equal 'valid (fo-no=-val test6))))
 
 (defparameter test7
