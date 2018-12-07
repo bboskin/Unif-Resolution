@@ -1038,7 +1038,7 @@ Examples
  where matrix is quantifier-free and in CNF. 
 
  Test your functions using at least 10 interesting formulas. 
- 
+
 |#
 ; generating new names predictably
 
@@ -1131,13 +1131,19 @@ Examples
 		(if bvars (extend-env/fns env vars bvars)
 		  (extend-env/constants env vars))))
 	   (skolemize- body bvars new-env))))
-      ((atomic-formulap `(,op . ,es)) (skolemize-atomic-formula f env))
+      ((atomic-formulap `(,op . ,es))
+       (skolemize-atomic-formula f env))
       (t (error "Invalid formula ~a" f))))
     (f (error "Invalid formula ~a" f))))
 
+
+(defun init-skolem-env (vs)
+  (mapcar #'(lambda (x) (cons x (new-constant-symbol))) vs))
+
 (defun skolemize (f)
   (defparameter SKOLEM-COUNTER 11)
-  (skolemize- f nil nil))
+  (let ((vs (free-vars f)))
+    (skolemize- f nil (init-skolem-env vs))))
 
 ;;;;;;;;;;;;;;;;;;;;;;
 ;; Prenex normal form
@@ -1315,7 +1321,7 @@ Examples
     (f (tseitin- f nil))))
 
 (defun simp-skolem-pnf-cnf (f)
-  (tseitin (prenex (skolemize (nnf (fo-simplify f))))))
+  (tseitin (fo-simplify (prenex (skolemize (nnf (fo-simplify f)))))))
 
 ;;; Testing to ensure that the result of simp-skolem-pnf-cnf
 ;;; has the right properties (cnf & matrix). Because
@@ -1448,7 +1454,7 @@ Examples
 	     (iff (exists (x) (P x)) (forall (y) (P y))))))
 
 ;;  this takes 45 seconds
-(time (assert (test-simp-skolem-pnf-cnf p34)))
+;(time (assert (test-simp-skolem-pnf-cnf p34)))
 
 (defparameter los-formula
   '(implies (and (forall (x y z) (implies (and (P x y) (P y z)) (P x z)))
@@ -1782,26 +1788,33 @@ Examples
 	(k2 (cadr e2)))
     (< (len k1) (len k2))))
 
-(defun less (e ls)
+(defun len< (e1 e2)
+  (< (len e1) (len e2)))
+
+(defun less (f e ls)
   (cond
    ((endp ls) nil)
-   ((res< (car ls) e)
-    (cons (car ls) (less e (cdr ls))))
-   (t (less e (cdr ls)))))
+   ((apply f (list (car ls) e))
+    (cons (car ls) (less f e (cdr ls))))
+   (t (less f e (cdr ls)))))
 
-(defun notless (e ls)
+(defun notless (f e ls)
   (cond
    ((endp ls) nil)
-   ((not (res< (car ls) e))
-    (cons (car ls) (notless e (cdr ls))))
-   (t (notless e (cdr ls)))))
+   ((not (apply f (list (car ls) e)))
+    (cons (car ls) (notless f e (cdr ls))))
+   (t (notless f e (cdr ls)))))
 
-(defun qsort-res< (l)
+(defun qsort (f l)
   (cond
    ((endp l) nil)
    (t (let ((piv (car l)))
-	(append (qsort-res< (less piv (cdr l)))
-		(cons piv (qsort-res< (notless piv (cdr l)))))))))
+	(append (qsort f (less f piv (cdr l)))
+		(cons piv (qsort f (notless f piv (cdr l)))))))))
+
+(defun qsort-res< (l) (sort l #'res<))
+(defun qsort-len< (l) (sort l #'len<))
+
 
 (defun make-substs (C D)
   (cond
@@ -1817,7 +1830,6 @@ Examples
 	  (append (complete-substs C-substs without)
 		  (complete-withouts without t1)
 		  C-substs))))))
-
 
 (defun split-batch (n ls)
   (cond
@@ -1915,7 +1927,10 @@ Examples
       (check-subsumption opts C D-ground))))
 
 (defun check-subsumed (k ls)
-  (reduce #'(lambda (a ans) (or ans (subsumes? a k)))
+  (reduce #'(lambda (a ans)
+	      (if ans ans
+		(if (subsumes? a k) (list a)
+		  nil)))
 	  ls :from-end t :initial-value nil))
 
 (defun check-subsumes (k ls use?)
@@ -1945,13 +1960,16 @@ Examples
 		(subsume-replace- b k pos neg)
 		(subsume-replace (cdr ks) pos neg))))))
 
-(defun initial-subsumption-filter (ls)
+(defun initial-subsumption-filter- (ls acc)
   (cond
-   ((endp ls) nil)
-   (t (let ((res (initial-subsumption-filter (cdr ls))))
-	(if (check-subsumed (car ls) res)
-	    res
-	  (check-subsumes (car ls) ls t))))))
+   ((endp ls) acc)
+   (t (let ((e (check-subsumed (car ls) acc)))
+	(if e
+	    (initial-subsumption-filter- (cdr ls) (cons (car e) acc))
+	    (initial-subsumption-filter- (cdr ls) (cons (car ls) acc)))))))
+
+(defun initial-subsumption-filter (ls)
+  (initial-subsumption-filter- ls nil))
 
 (defun manage-options (n ops)
   (cond
@@ -1960,9 +1978,8 @@ Examples
        (now later)
        (split-batch n ops)
        (let ((v (attempt-resolution now)))
-	 (if (in nil v) (list nil) (append v (manage-options (+ n 1) later)))
-	 ;(if v v (manage-options (+ n 1) later))
-	 )))))
+	 (if (in nil v) (list nil)
+	   (append v (manage-options (+ n 1) later))))))))
 
 (defun U-res (pos neg)
   (cond
@@ -1976,6 +1993,7 @@ Examples
 	    (subsume-replace listof-k-res pos neg)
 	    (U-res pos neg))))))))
 
+
 (defun fo-no=-val (f)
   (print "Performing simplification, skolemization, prenex, and tseitin")
   (let ((psi (simp-skolem-pnf-cnf `(not ,f))))
@@ -1983,7 +2001,7 @@ Examples
       (let* ((m (matrix psi))
 	     (K (formula-to-clauses m)))
 	(print "Minimizing initial clauses using subsumption analysis")
-	(let ((K (remove-dups (initial-subsumption-filter K))))
+	(let ((K (remove-dups (initial-subsumption-filter (qsort-len< K)))))
 	  (mv-let (pos neg) (split-clauses K nil nil)
 		  (progn
 		    (print "The initial sets of clauses are:")
@@ -1995,7 +2013,81 @@ Examples
 			     ('sat 'not-valid)
 			     ('unsat 'valid))))))))))
 
-;; The exam problem
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+;;; Modified implementation, based on Book code
+;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+(defun make-substs- (C D)
+  (cond
+   ((endp C) nil)
+   (t (let ((t1 (car C)))
+	(let* ((matches
+		(match t1
+		       ((list 'not (list* R ts)) (find-matches nil R D nil))
+		       ((list* R ts) (find-matches t R D nil))))
+	       (C-substs (link-matches t1 matches D))
+	       (C-substs (extend-k-res C-substs (cdr C)))
+	       (without (make-substs- (cdr C) D)))
+	  (append (complete-substs C-substs without)
+		  (complete-withouts without t1)
+		  C-substs))))))
+
+;; guard for positive resolution
+(defun make-substs (C D)
+  (if (and (not (all-positivep C))
+	   (not (all-positivep D)))
+      nil (make-substs- C D)))
+
+(defun resolve-all (cls ls)
+  (cond
+   ((endp ls) nil)
+   (t (append (attempt-resolution (make-substs cls (car ls)))
+	      (resolve-all cls (cdr ls))))))
+
+(defun subsumption-check (ls acc)
+  (cond
+   ((endp ls) acc)
+   (t (let ((e (check-subsumed (car ls) acc)))
+	(if e
+	    (initial-subsumption-filter- (cdr ls) (cons (car e) acc))
+	    (initial-subsumption-filter- (cdr ls) (cons (car ls) acc)))))))
+
+(defun initial-subsumption-filter (ls)
+  (initial-subsumption-filter- ls nil))
+
+(defun add-if-not-subsumed (old new acc)
+  (cond
+   ((endp new) (append old acc))
+   ((check-subsumed (car new) old) (add-if-not-subsumed old (cdr new) acc))
+   (t (add-if-not-subsumed old (cdr new) (cons (car new) acc)))))
+
+(defun U-res (used unused)
+  (cond
+   ((endp unused) (error "Couldn't find a proof"))
+   (t (let* ((cls (car unused))
+	     (used (cons cls used))
+	     (news (resolve-all cls used)))
+	(if (in nil news) 'valid
+	  (U-res used (add-if-not-subsumed (cdr unused) news nil)))))))
+
+(defun fo-no=-val (f)
+  (print "Performing simplification, skolemization, prenex, and tseitin")
+  (let ((psi (simp-skolem-pnf-cnf `(not ,f))))
+    (if (booleanp psi) (if psi 'not-valid 'valid)
+      (let* ((m (matrix psi))
+	     (K (formula-to-clauses m)))
+	(print "Minimizing initial clauses using subsumption analysis")
+	(let ((K (remove-dups (initial-subsumption-filter (qsort-len< K)))))
+	  (progn
+	    (print "The initial clauses are:")
+	    (print K)
+	    (print "starting U-resolution")
+	    (U-res nil K)))))))
+
+
+
+;; The exam problem -- my old implementation found a solution,
+;; but my solution doesn't
 (defparameter examQ4
   '(not (forall (x y z)
 		(and (or (R x (f y z)) (P (f y z) (f y x)))
@@ -2004,8 +2096,8 @@ Examples
 		     (or (P x z) (not (R x z)))
 		     (or (not (Q (f x y) z)))))))
 
-; 3.3 seconds
-(time (assert (equal 'valid (fo-no=-val examq4))))
+; 25 seconds
+(time (assert (equal 'valid (fo-no=-val examQ4))))
 
 
 ;; testing on simple validities from Wikipedia
@@ -2040,16 +2132,16 @@ Examples
 (assert (equal 'valid (fo-no=-val test1)))
 (assert (equal 'valid (fo-no=-val test2)))
 
-; 2 seconds
+; 3 seconds
 (time (assert (equal 'valid (fo-no=-val test3))))
 (time (assert (equal 'valid (fo-no=-val test4))))
 
-;; These are a little slower
+;; These are slower
 
-; 11 secs
+; 21 secs 
 (time (assert (equal 'valid (fo-no=-val test5))))
 
-; 13 secs
+; 35 secs
 (time (assert (equal 'valid (fo-no=-val test6))))
 
 (defparameter test7
@@ -2059,126 +2151,37 @@ Examples
 			 (Q x)))))
 
 (defparameter test8
+  '(iff (and (implies (not (or (natp c1) (symbolp c1))) (R z y))
+	     (exists (x) (Q x)))
+	(exists (x) (and (implies (not (or (natp c1) (symbolp c1))) (R z y))
+			 (Q x)))))
+
+(defparameter test9
   '(iff (or (R c1 c2)
 	    (forall (x) (Q x)))
 	(forall (x)
 		(or (R c1 c2)
 		    (Q x)))))
 
-(defparameter test9
-  '(iff (or (not (R c1 c2))
+(defparameter test10
+  '(iff (or (not (forall (z) (not (R z c2))))
 	    (forall (x) (Q x)))
 	(forall (x)
-		(or (not (R c1 c2))
+		(or (not (forall (z) (not (R z c2))))
 		    (Q x)))))
 
-;; test9
-
-(qsort-res< (gen-all
-	     '(((Q X1567))
-	       ((R C1 C2) (REL12 X))
-	       ((REL11 X) (REL12 X)))
-	     
-	     '(((REL12 X1573) (NOT (Q C11)))
-	       ((NOT (Q C12)) (NOT (REL13 X)))
-	       ((R C1 C2) (NOT (REL13 X)))
-	       ((Q X1567))
-	       ((Q X1567))
-	       ((NOT (Q C11)) (NOT (REL11 X)))
-	       ((R C1 C2) (NOT (REL11 X)))
-	       ((Q X1567))
-	       ((Q X1567))
-	       ((NOT (Q X)) (REL12 X))) ))
-
-(qsort-res< (gen-all
-	     '(((R C1 C2) (REL12 X))
-	       ((REL11 X) (REL12 X)))
-	     '(((NOT (Q C12)) (NOT (REL13 X)))
-	       ((R C1 C2) (NOT (REL13 X)))
-	       ((NOT (R C1 C2)) (Q C12) (REL13 X))
-	       ((REL13 X) (NOT (R C1 C2)) (Q X))
-	       ((NOT (Q C11)) (NOT (REL11 X)))
-	       ((R C1 C2) (NOT (REL11 X)))
-	       ((NOT (R C1 C2)) (Q C11) (REL11 X))
-	       ((NOT (R C1 C2)) (Q X) (NOT (REL12 X)))
-	       ((NOT (Q X)) (REL12 X)))))
-
-
-(((((R C1 C2) R C1 C2) ((REL12 X) REL12 X1567)) ((Q X1567)))
- ((((REL11 X) REL11 X1573)) ((REL12 X) (NOT (Q C11))))
- ((((REL11 X) REL11 X1574)) ((REL12 X) (R C1 C2)))
- ((((R C1 C2) R C1 C2)) ((REL12 X) (Q C12) (REL13 X1562)))
- ((((R C1 C2) R C1 C2)) ((REL12 X) (REL13 X1563) (Q X1563)))
- ((((R C1 C2) R C1 C2)) ((REL12 X) (Q C11) (REL11 X1566)))
- ((((REL12 X) REL12 X1567)) ((R C1 C2) (NOT (R C1 C2)) (Q X1567)))
- ((((R C1 C2) R C1 C2)) ((REL12 X) (Q X1567) (NOT (REL12 X1567))))
- ((((REL12 X) REL12 X1576)) ((REL11 X) (NOT (R C1 C2)) (Q X1576))))
-
-;; test8
-(((((Q C12) Q C12) ((REL13 X) REL13 X1532)) ((R C1 C2)))
- ((((R C1 C2) R C1 C2) ((REL13 X) REL13 X1533)) ((Q C12)))
- ((((REL13 X) REL13 X1539) ((Q X) Q C12)) ((R C1 C2)))
- ((((REL13 X) REL13 X1540) ((R C1 C2) R C1 C2)) ((Q X)))
- ((((Q C11) Q C11) ((REL11 X) REL11 X1548)) ((R C1 C2)))
- ((((R C1 C2) R C1 C2) ((REL11 X) REL11 X1549)) ((Q C11)))
- ((((REL11 X) REL11 X1555)) ((REL12 X) (NOT (Q C11))))
- ((((REL11 X) REL11 X1556)) ((REL12 X) (NOT (R C1 C2))))
- ((((REL13 X) REL13 X1532)) ((R C1 C2) (Q C12) (NOT (Q C12))))
- ((((Q C12) Q C12)) ((R C1 C2) (REL13 X) (NOT (REL13 X1532))))
- ((((REL13 X) REL13 X1533)) ((R C1 C2) (Q C12) (NOT (R C1 C2))))
- ((((R C1 C2) R C1 C2)) ((Q C12) (REL13 X) (NOT (REL13 X1533))))
- ((((Q C12) Q C11)) ((R C1 C2) (REL13 X) (NOT (REL11 X1534))))
- ((((R C1 C2) R C1 C2)) ((Q C12) (REL13 X) (NOT (REL11 X1535))))
- ((((Q C12) Q X1537)) ((R C1 C2) (REL13 X) (REL12 X1537)))
- ((((R C1 C2) R C1 C2)) ((Q C12) (REL13 X) (REL12 X1538)))
- ((((Q X) Q C12)) ((REL13 X) (R C1 C2) (NOT (REL13 X1539))))
- ((((REL13 X) REL13 X1539)) ((R C1 C2) (Q X) (NOT (Q C12))))
- ((((R C1 C2) R C1 C2)) ((REL13 X) (Q X) (NOT (REL13 X1540))))
- ((((REL13 X) REL13 X1540)) ((R C1 C2) (Q X) (NOT (R C1 C2))))
- ((((Q X) Q C11)) ((REL13 X) (R C1 C2) (NOT (REL11 X1541))))
- ((((R C1 C2) R C1 C2)) ((REL13 X) (Q X) (NOT (REL11 X1542))))
- ((((Q X) Q X1544)) ((REL13 X) (R C1 C2) (REL12 X1544)))
- ((((R C1 C2) R C1 C2)) ((REL13 X) (Q X) (REL12 X1545)))
- ((((Q C11) Q C12)) ((R C1 C2) (REL11 X) (NOT (REL13 X1546))))
- ((((R C1 C2) R C1 C2)) ((Q C11) (REL11 X) (NOT (REL13 X1547))))
- ((((REL11 X) REL11 X1548)) ((R C1 C2) (Q C11) (NOT (Q C11))))
- ((((Q C11) Q C11)) ((R C1 C2) (REL11 X) (NOT (REL11 X1548))))
- ((((REL11 X) REL11 X1549)) ((R C1 C2) (Q C11) (NOT (R C1 C2))))
- ((((R C1 C2) R C1 C2)) ((Q C11) (REL11 X) (NOT (REL11 X1549))))
- ((((Q C11) Q X1551)) ((R C1 C2) (REL11 X) (REL12 X1551)))
- ((((R C1 C2) R C1 C2)) ((Q C11) (REL11 X) (REL12 X1552)))
- ((((REL12 X) REL12 X1557)) ((REL11 X) (R C1 C2) (Q X1557))))
-
-(qsort-res<  (gen-all
-	      '(((R C1 C2) (Q C12) (REL13 X))
-	       ((REL13 X) (R C1 C2) (Q X))
-	       ((R C1 C2) (Q C11) (REL11 X))
-	       ((REL11 X) (REL12 X)))
-
-	      '(((NOT (Q C12)) (NOT (REL13 X)))
-	       ((NOT (R C1 C2)) (NOT (REL13 X)))
-	       ((NOT (Q C11)) (NOT (REL11 X)))
-	       ((NOT (R C1 C2)) (NOT (REL11 X)))
-	       ((R C1 C2) (Q X) (NOT (REL12 X)))
-	       ((NOT (Q X)) (REL12 X))
-	       ((NOT (R C1 C2)) (REL12 X)))))
-
-; 30 secs
+;  secs
 (time (assert (equal 'valid (fo-no=-val test7))))
-
-(defparameter test7-2
-  '(iff (and (implies (not (or (natp c1) (symbolp c1))) (R z y))
-	     (exists (x) (Q x)))
-	(exists (x) (and (implies (not (or (natp c1) (symbolp c1))) (R z y))
-			 (Q x)))))
-
-; 47 secs
-(time (assert (equal 'valid (fo-no=-val test7-2))))
-
-; 8 secs
+;  secs
 (time (assert (equal 'valid (fo-no=-val test8))))
 
+
+; 24 secs
 (time (assert (equal 'valid (fo-no=-val test9))))
+
+; 30 secs
+(time (assert (equal 'valid (fo-no=-val test10))))
+
 
 ;; Other book problems
 (defparameter prawitz
@@ -2186,6 +2189,7 @@ Examples
 							   (and (R z) (QQ w))))))
 	    (exists (x y) (implies (and (P x) (Q y)) (exists (z) (R z))))))
 
+; 2.4 secs
 (time (assert (equal 'valid (fo-no=-val prawitz))))
 
 ;;;;;;;;;;;;;;
@@ -2197,8 +2201,8 @@ Examples
 (defparameter barb
   '(not (exists (z) (forall (x) (iff (shaves z x)
 				     (not (shaves x x)))))))
-
-(assert (equal 'valid (fo-no=-val barb)))
+;; really quick
+(time (assert (equal 'valid (fo-no=-val barb))))
 
 ;178 (p38, p34), 
 
@@ -2220,7 +2224,7 @@ Examples
 	(iff (exists (x) (forall (y) (iff (Q x) (Q y))))
 	     (iff (exists (x) (P x)) (forall (y) (P y))))))
 
-;(assert (equal 'valid (fo-no=-val p34)))
+;(time (assert (equal 'valid (fo-no=-val p34))))
 
 ;;179 (ewd1062)
 
@@ -2241,23 +2245,6 @@ Examples
 		 (forall (x y) (or (P x y) (Q x y))))
 	    (or (forall (x y) (P x y))
 		(forall (x y) (Q x y)))))
-
-(((((Q X Y) Q C13 C14)) ((P X Y)))
- ((((P X Y) P C11 C12)) ((Q X Y)))
- ((((Q X Y) Q X236 Y235)) ((P X Y) (Q Y235 X236)))
- ((((Q X Y) Q Y237 Z) ((Q X Y) Q X238 Y237)) ((P X Y) (NOT (Q Y237 Z)) (Q X238 Z)))
- ((((Q X Y) Q X238 Y237)) ((P X Y) (NOT (Q Y237 Z)) (Q X238 Z)))
- ((((Q X Y) Q Y237 Z)) ((P X Y) (NOT (Q X238 Y237)) (Q X238 Z)))
- ((((P X Y) P Y239 Z) ((P X Y) P X240 Y239)) ((Q X Y) (NOT (P Y239 Z)) (P X240 Z)))
- ((((P X Y) P X240 Y239)) ((Q X Y) (NOT (P Y239 Z)) (P X240 Z)))
- ((((P X Y) P Y239 Z)) ((Q X Y) (NOT (P X240 Y239)) (P X240 Z))))
-
-(((P X Y) (Q X Y)))
-(((NOT (Q C13 C14)))
- ((NOT (P C11 C12)))
- ((NOT (Q X Y)) (Q Y X))
- ((NOT (Q X Y)) (NOT (Q Y Z)) (Q X Z))
- ((NOT (P X Y)) (NOT (P Y Z)) (P X Z)))
 
 (assert (equal 'valid (fo-no=-val los-formula))) 
 
@@ -2348,31 +2335,35 @@ Examples
 	   (mv-let
 	    (pos neg) (split-clauses K nil nil)
 	    (progn
+	      (print pos) (print neg)
 	      (print "beginning U-resolution")
 	      (let ((res (U-res pos neg)))
 		(match res
 		  ('sat 'not-valid)
 		  ('unsat 'valid)))))))))))
 
-
-(time (assert (equal 'valid (fo-val '(forall (x y) (iff (= x y) (= y x)))))))
 (time (assert (equal 'valid (fo-val '(forall (x) (exists (y) (= x y)))))))
+
+(time (assert (equal 'valid (fo-val '(forall (x y) (iff (= x y) (= y x))))))) 
+
 (time (assert (equal 'valid (fo-val
 			     '(implies (exists (x y) (not (= x y)))
 				       (exists (x) (not (= x c1))))))))
 
+;; 22 seconds
 (time (assert (equal 'valid (fo-val
 			     '(forall (x y) (exists (z1 z2)
 						    (implies (= z1 z2)
 							     (iff (R x y z1)
 								  (R x y z2)))))))))
-
+;; 26 seconds
 (time (assert (equal 'valid (fo-val
 			     '(forall (x y) (forall (z1 z2)
 						    (implies (= z1 z2)
 							     (iff (R x y z1)
 								  (R x y z2)))))))))
 
+;; 80 seconds
 (time (assert (equal 'valid (fo-val
 			     '(forall (x y z)
 				      (implies (not (exists (w x) (not (= w x))))
@@ -2399,16 +2390,32 @@ Examples
 
  |#
 
+(defun do-loop (rules g env)
+  (cond
+   ((endp rules) env)
+   (t (let* ((rule (car rules))
+	     (rule (deBruijn~ rule))
+	     (c (car rule))
+	     (asm (cdr rule))
+	     (res (unify `((,c . ,g) . ,env))))
+	(if (equal res 'fail)
+	    (do-loop (cdr rules) g env)
+	  (horn-loop rules res gs))))))
 
-(defun positive-hornp (f)
+(defun horn-loop (rules env goals)
+  (match goals
+    (nil env)
+    ((cons g1 gs)
+     (horn-loop rules (do-loop rules g1 env) gs))))
+
+(defun parse-rule (f)
   (match f
-    ((list 'forall vars phi) (positive-hornp phi))
-    ((satisfies atomic-formulap) t)
+    ((list 'forall vars phi) (parse-rule f))
+    ((satisfies atomic-formulap) (list f))
     ((list 'implies (list* 'and es) phi)
-     (and (atomic-formulap phi)
-	  (reduce #'(lambda (x ans) (and ans (atomic-formulap x)))
-		  es :initial-value t :from-end t)))))
+     (cons phi es))))
+
 
 (defun horn-sat (hs e)
-  (let ((hs-pos (remove-if-not #'positive-hornp hs)))
-    'TODO))
+  (let ((rules (mapcar #'parse-rule hs)))
+    (horn-loop rules env goals)))
