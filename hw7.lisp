@@ -14,7 +14,9 @@
 
  The group members are:
 
- ... (put the names of the group members here)
+ Ben Boskin
+ Ankit Kumar
+ Andrew Walter
  
  Use the same ACL2s build from homework 6.
  
@@ -2201,6 +2203,7 @@ Examples
 
 (time (assert (equal 'valid (fo-no=-val p38))))
 
+;; this takes ~90s on a fast machine
 (defparameter p34
   '(iff (iff (exists (x) (forall (y) (iff (P x) (P y))))
 	     (iff (exists (x) (Q x)) (forall (y) (Q y))))
@@ -2210,8 +2213,6 @@ Examples
 (time (assert (equal 'valid (fo-no=-val p34))))
 
 ;;179 (ewd1062)
-
-;; 142 secs
 (defparameter ewd1062
   '(implies (and (forall (x) (LTE x x))
 		 (forall (x y z) (implies (and (LTE x y) (LTE y z)) (LTE x z)))
@@ -2230,7 +2231,7 @@ Examples
 	    (or (forall (x y) (P x y))
 		(forall (x y) (Q x y)))))
 
-(assert (equal 'valid (fo-no=-val los-formula))) 
+(time (assert (equal 'valid (fo-no=-val los-formula))) )
 
 #|
 
@@ -2316,7 +2317,8 @@ Examples
 	 (let* ((m (matrix psi))
 		(K (formula-to-clauses m))
 		(K (remove-dups (append EQ K))))
-	   (mv-let
+	   (U-res nil K)))))))
+#|	   (mv-let
 	    (pos neg) (split-clauses K nil nil)
 	    (progn
 	      (print pos) (print neg)
@@ -2324,7 +2326,8 @@ Examples
 	      (let ((res (U-res pos neg)))
 		(match res
 		  ('sat 'not-valid)
-		  ('unsat 'valid)))))))))))
+		  ('unsat 'valid)
+		  (otherwise res)))))))))))|#
 
 (time (assert (equal 'valid (fo-val '(forall (x) (exists (y) (= x y)))))))
 
@@ -2334,24 +2337,16 @@ Examples
 			     '(implies (exists (x y) (not (= x y)))
 				       (exists (x) (not (= x c1))))))))
 
-;; 22 seconds
 (time (assert (equal 'valid (fo-val
 			     '(forall (x y) (exists (z1 z2)
 						    (implies (= z1 z2)
 							     (iff (R x y z1)
 								  (R x y z2)))))))))
-;; 26 seconds
 (time (assert (equal 'valid (fo-val
 			     '(forall (x y) (forall (z1 z2)
 						    (implies (= z1 z2)
 							     (iff (R x y z1)
 								  (R x y z2)))))))))
-
-;; 80 seconds
-(time (assert (equal 'valid (fo-val
-			     '(forall (x y z)
-				      (implies (not (exists (w x) (not (= w x))))
-					       (iff (= z y) t (= y z) (= x z))))))))
 
 #|
 
