@@ -1000,7 +1000,6 @@ Examples
 (defun nnf (f)
   (fo-simplify (nnf- f nil)))
 
-
 ;; Testing on quantifier-free formulas
 (defun test-nnf (form)
   (print "FORMULA is:")
@@ -1017,7 +1016,8 @@ Examples
 		   (form-nnf (to-acl2 form-nnf)))
 	       (assert (equal '(nil nil)
 			      (acl2s-query
-			       `(acl2s::thm (equal ,form ,form-nnf))))))))))
+			       `(acl2s::thm
+				 (equal ,form ,form-nnf))))))))))
 
 (defparameter DEFAULT-DEPTH 3)
 
@@ -1249,7 +1249,7 @@ Examples
 	    (v (prenex- body (append new-names renaming)))
 	    (qs (car v))
 	    (f (cdr v)))
-       (cons (append (mapcar #'cdr new-names) qs) f)))
+       (cons (set-binary-union (mapcar #'cdr new-names) qs) f)))
     ((satisfies atomic-formulap) (cons nil (apply-renaming renaming f)))
     (f (error "Invalid formula ~a" f))))
 
@@ -1264,11 +1264,8 @@ Examples
   (match ls
    (nil (values simp ors))
    ((list* (list* 'or es) rst)
-    (split-and rst simp (cons `(or . ,es) ors)))
+    (split-and rst simp (cons es ors)))
    ((list* f rst) (split-and rst (cons f simp) ors))))
-
-
-
 
 (defun comb (&rest ls)
   (cond
@@ -1278,6 +1275,15 @@ Examples
 			  (car ls)))
 	      (apply #'comb (cdr ls))))))
 
+(defun distrib (es)
+  (mv-let (simp ors)
+	  (split-and es nil nil)
+	  (if (endp ors) simp
+	    (let ((vs (apply #'comb ors)))
+	      (reduce #'(lambda (x ans)
+			  (cons  (cons 'and (distrib (append simp x)))
+				 ans))
+		      vs :from-end t :initial-value nil)))))
 
 (defun dnf (f)
   (match f
@@ -1285,13 +1291,7 @@ Examples
     ((satisfies atomic-formulap) f)
     ((list 'not f) `(not ,f))
     ((list* 'or es) `(or . ,(mapcar #'dnf es)))
-    ((list* 'and es)
-     (mv-let
-      (simp ors) (split-and es nil nil)
-      (let ((all-ors (apply #'comb (mapcar #'cdr ors))))
-	(if (endp ors) `(and . ,simp)
-	  `(or . ,(mapcar #'(lambda (x) (cons 'or (append simp x)))
-			  all-ors))))))))
+    ((list* 'and es) `(or . ,(distrib (mapcar #'dnf es))))))
 
 (defun cnf (f)
   (match f
@@ -1303,6 +1303,7 @@ Examples
   (fo-simplify
    (cnf (fo-simplify (prenex (fo-simplify (skolemize (nnf (fo-simplify f)))))))))
 
+
 ;;; Testing to ensure that the result of simp-skolem-pnf-cnf
 ;;; has the right properties (cnf & matrix). Because
 ;;; unufication-resolution can prove that the results are validities
@@ -1311,16 +1312,16 @@ Examples
 
 (defun matrixp (f)
   (match f
-    ((satisfies booleanp) t)
-    ((satisfies atomic-formulap) t)
-    ((list 'not f) (matrixp f))
-    ((list* 'and fs)
-     (reduce #'(lambda (e ans) (and ans (matrixp e))) fs
-	     :from-end t :initial-value t))
-    ((list* 'or fs)
-     (reduce #'(lambda (e ans) (and ans (matrixp e))) fs
-	     :from-end t :initial-value t))
-    (_ nil)))
+	 ((satisfies booleanp) t)
+	 ((satisfies atomic-formulap) t)
+	 ((list 'not f) (matrixp f))
+	 ((list* 'and fs)
+	  (reduce #'(lambda (e ans) (and ans (matrixp e))) fs
+		  :from-end t :initial-value t))
+	 ((list* 'or fs)
+	  (reduce #'(lambda (e ans) (and ans (matrixp e))) fs
+		  :from-end t :initial-value t))
+	 (_ nil)))
 
 (defun atomic-or-neg (e)
   (match e
@@ -1349,15 +1350,15 @@ Examples
 (defun test-simp-skolem-pnf-cnf (f)
   (let ((f (simp-skolem-pnf-cnf f)))
     (let ((m (match f
-	       ((list 'forall _ m) m)
-	       (_ f))))
+	       ((list 'forall vars m) m)
+	       (otherwise f))))
       (and (matrixp m) (cnfp m)))))
 
 ;; validities from wikipedia, which are used for the evaluator as well
 
 (defparameter test1
-    '(iff (not (forall (x) (P x)))
-	  (exists (x) (not (P x)))))
+  '(iff (not (forall (x) (P x)))
+	(exists (x) (not (P x)))))
 
 (assert (test-simp-skolem-pnf-cnf test1))
 
@@ -1428,14 +1429,14 @@ Examples
 
 (assert (test-simp-skolem-pnf-cnf p38))
 
+
 (defparameter p34
   '(iff (iff (exists (x) (forall (y) (iff (P x) (P y))))
 	     (iff (exists (x) (Q x)) (forall (y) (Q y))))
 	(iff (exists (x) (forall (y) (iff (Q x) (Q y))))
 	     (iff (exists (x) (P x)) (forall (y) (P y))))))
 
-;;  this takes 45 seconds
-;(time (assert (test-simp-skolem-pnf-cnf p34)))
+(time (assert (test-simp-skolem-pnf-cnf p34)))
 
 (defparameter los-formula
   '(implies (and (forall (x y z) (implies (and (P x y) (P y z)) (P x z)))
@@ -2018,13 +2019,16 @@ Examples
 (defun add-if-not-subsumed (old new acc)
   (cond
    ((endp new) (append old acc))
-   ((check-subsumed (car new) old) (add-if-not-subsumed old (cdr new) acc))
+   ((check-subsumed (car new) old)
+    (add-if-not-subsumed old (cdr new) acc))
    (t (add-if-not-subsumed old (cdr new) (cons (car new) acc)))))
 
 (defun U-res (used unused)
   (cond
    ((endp unused) (error "Couldn't find a proof"))
    (t (let* ((cls (car unused))
+	     (f-vs (free-vars cls))
+	     (cls (map-renaming cls (extend-fresh f-vs f-vs)))
 	     (used (cons cls used))
 	     (news (resolve-all cls used)))
 	(if (in nil news) 'valid
@@ -2110,40 +2114,25 @@ Examples
 	(exists (x) (and (implies (natp c1) (R z y))
 			 (Q x)))))
 
-'(not (iff (and (implies (natp c1) (R z y))
-		(exists (x) (Q x)))
-	   (exists (x) (and (implies (natp c1) (R z y))
-			    (Q x)))))
-= {same after simp}
-={nnf + skolem}
-'(or (and (or (not (natp c1)) (R z y))
-	  (Q c1)
-	  (forall (x) (or (and (natp c1) (not (R z y)))
-			  (not (Q x)))))
-     (and (and (or (not (natp c1)) (R z y))
-	       (Q c2))
-	  (or (and (natp c1) (not (R z y)))
-	      (forall (x) (not (Q x))))))
-={prenex}
-'(forall (x x1)
-	 (or (and (or (not (natp c1)) (R z y))
-		  (Q c1)
-		  (or (and (natp c1) (not (R z y)))
-		      (not (Q x))))
-	     (and (and (or (not (natp c1)) (R z y))
-		       (Q c2))
-		  (or (and (natp c1) (not (R z y)))
-		      (not (Q x1))))))
-={cnf}
-'(exists (x x1)
-	 (and (or (not (Q c1))
-		  (and (natp c1) (not (R z y)))
-		  (and (not (natp c1)) (Q x))
-		  (and (R z y) (not (Q x))))
-	      (or (and (natp c1) (not (R z y)))
-		  (not (Q c2))
-		  (and (not (natp c1)) (Q x1))
-		  (and (R x y) (Q x1)))))
+'(and (or (natp c1)
+	  (not (R c3 c4))
+	  (not (Q c1))
+	  (and (or (not (natp c1)) (R c3 c4))
+	       (Q c2)))
+      (or (not (and (or (not (natp c1)) (R c3 c4))
+		    (Q c2)))
+	  (and (or (not (natp c1)) (R c3 c4))
+	       (Q c1))
+	  ))
+
+
+
+
+
+
+
+
+
 
 (defparameter test8
   '(iff (and (implies (not (or (natp c1) (symbolp c1))) (R z y))
@@ -2164,7 +2153,6 @@ Examples
 	(forall (x)
 		(or (not (forall (z) (not (R z c2))))
 		    (Q x)))))
-
 
 ;  secs
 (time (assert (equal 'valid (fo-no=-val test7))))
@@ -2219,10 +2207,11 @@ Examples
 	(iff (exists (x) (forall (y) (iff (Q x) (Q y))))
 	     (iff (exists (x) (P x)) (forall (y) (P y))))))
 
-;(time (assert (equal 'valid (fo-no=-val p34))))
+(time (assert (equal 'valid (fo-no=-val p34))))
 
 ;;179 (ewd1062)
 
+;; 142 secs
 (defparameter ewd1062
   '(implies (and (forall (x) (LTE x x))
 		 (forall (x y z) (implies (and (LTE x y) (LTE y z)) (LTE x z)))

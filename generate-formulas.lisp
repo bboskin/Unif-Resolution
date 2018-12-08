@@ -145,3 +145,8 @@
     (create-formula DEFAULT-DEPTH var-list)))
 
 (defparameter DEFAULT-DEPTH 3)
+
+
+
+
+
